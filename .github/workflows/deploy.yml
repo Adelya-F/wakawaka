@@ -1,0 +1,779 @@
+name: Deploy Frontend to Amplify with Email Tracking
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'frontend/**'
+  workflow_dispatch:
+    inputs:
+      # Tambah input untuk tracking user fork
+      requester_email:
+        description: '📧 Email Anda (required untuk tracking)'
+        required: true
+        type: string
+        default: ''
+        validation: '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+        help: 'Email akan digunakan untuk notifikasi dan tracking deployment'
+      
+      deployment_purpose:
+        description: '🎯 Tujuan Deployment (opsional)'
+        required: false
+        type: string
+        default: 'Testing/Learning'
+        help: 'Deskripsi singkat tujuan deployment ini'
+
+env:
+  AWS_REGION: us-east-1
+  COMPETITION_NAME: "LKS Cloud Computing"
+  OWNER_EMAIL: "handi@seamolec.org"
+
+jobs:
+  # ========== EMAIL TRACKING & VALIDATION ==========
+  track-and-notify-owner:
+    name: 📧 Track Fork Deployment & Notify Owner
+    runs-on: ubuntu-latest
+    outputs:
+      email_valid: ${{ steps.validate.outputs.email_valid }}
+      is_fork: ${{ steps.check-fork.outputs.is_fork }}
+      user_email: ${{ steps.get-email.outputs.user_email }}
+      deployment_purpose: ${{ steps.get-purpose.outputs.deployment_purpose }}
+    
+    steps:
+      - name: 🔍 Check if Repository is Fork
+        id: check-fork
+        run: |
+          # Cek apakah ini repository fork
+          REPO_OWNER="${{ github.repository_owner }}"
+          ORIGINAL_OWNERS="handipradana"  # ⬅️ GANTI DENGAN USERNAME GITHUB ANDA
+          
+          echo "Repository Owner: $REPO_OWNER"
+          echo "Original Owners: $ORIGINAL_OWNERS"
+          
+          if [[ ! $ORIGINAL_OWNERS =~ $REPO_OWNER ]]; then
+            echo "📌 Repository ini adalah FORK"
+            echo "is_fork=true" >> $GITHUB_OUTPUT
+            echo "FORK_OWNER=${{ github.actor }}" >> $GITHUB_ENV
+            echo "FORK_REPO=${{ github.repository }}" >> $GITHUB_ENV
+            echo "IS_FORKED_REPO=true" >> $GITHUB_ENV
+          else
+            echo "✅ Repository original (bukan fork)"
+            echo "is_fork=false" >> $GITHUB_OUTPUT
+            echo "IS_FORKED_REPO=false" >> $GITHUB_ENV
+          fi
+      
+      - name: 📝 Get User Email and Purpose
+        id: get-email
+        run: |
+          # Untuk workflow_dispatch: ambil dari inputs
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            USER_EMAIL="${{ github.event.inputs.requester_email }}"
+            DEPLOYMENT_PURPOSE="${{ github.event.inputs.deployment_purpose }}"
+            echo "Workflow Dispatch Mode"
+            echo "User email from input: $USER_EMAIL"
+            echo "Purpose from input: $DEPLOYMENT_PURPOSE"
+          else
+            # Untuk push/pull_request: gunakan GitHub email atau actor
+            USER_EMAIL="${{ github.actor }}@users.noreply.github.com"
+            DEPLOYMENT_PURPOSE="Automatic deployment via ${{ github.event_name }}"
+            echo "Push/Pull Request Mode"
+            echo "Generated email: $USER_EMAIL"
+            echo "Generated purpose: $DEPLOYMENT_PURPOSE"
+          fi
+          
+          echo "user_email=$USER_EMAIL" >> $GITHUB_OUTPUT
+          echo "deployment_purpose=$DEPLOYMENT_PURPOSE" >> $GITHUB_OUTPUT
+          echo "USER_EMAIL=$USER_EMAIL" >> $GITHUB_ENV
+          echo "DEPLOYMENT_PURPOSE=$DEPLOYMENT_PURPOSE" >> $GITHUB_ENV
+      
+      - name: 📧 Validate Email Format (for workflow_dispatch only)
+        id: validate-email
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          EMAIL="${{ github.event.inputs.requester_email }}"
+          
+          if [[ ! $EMAIL =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+            echo "❌ Format email tidak valid: $EMAIL"
+            echo "email_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "✅ Email format valid: $EMAIL"
+          echo "email_valid=true" >> $GITHUB_OUTPUT
+      
+      - name: ✅ Skip Email Validation (for push/pull_request)
+        id: skip-validation
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          echo "⏭️ Skipping email validation for ${{ github.event_name }}"
+          echo "email_valid=true" >> $GITHUB_OUTPUT
+      
+      - name: 📨 Send Immediate Notification to Owner via SMTP2GO
+        if: steps.check-fork.outputs.is_fork == 'true' && steps.validate-email.outputs.email_valid == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          # Konfigurasi SMTP2GO
+          server_address: mail.smtp2go.com
+          server_port: 2525
+          username: ${{ secrets.SMTP2GO_USERNAME }}
+          password: ${{ secrets.SMTP2GO_PASSWORD }}
+          subject: "🚨 DEPLOYMENT DETECTED FROM FORK: ${{ github.actor }}"
+          to: ${{ env.OWNER_EMAIL }}
+          from: "aws@seamolec.org"  # ⬅️ FIXED: Hanya email tanpa nama
+          html_body: |
+            <!DOCTYPE html>
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <div style="background: #dc3545; padding: 20px; color: white; text-align: center;">
+                <h2 style="margin: 0;">🚨 Deployment Detected</h2>
+                <p style="opacity: 0.9;">From forked repository</p>
+              </div>
+              
+              <div style="padding: 20px; background: #f8f9fa;">
+                <div style="background: white; border-radius: 5px; padding: 20px; margin: 15px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                  <h3 style="margin-top: 0; color: #dc3545;">📌 Forked Repository Activity</h3>
+                  <table style="width: 100%;">
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee; width: 150px;"><strong>GitHub User:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        <a href="https://github.com/${{ github.actor }}">@${{ github.actor }}</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Event Type:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        ${{ github.event_name }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>User Email:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        ${{ env.USER_EMAIL }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Purpose:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        ${{ env.DEPLOYMENT_PURPOSE }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Repository:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        <a href="https://github.com/${{ github.repository }}">${{ github.repository }}</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 10px;"><strong>Original Repo:</strong></td>
+                      <td style="padding: 10px;">
+                        <a href="https://github.com/handipradana/${{ github.event.repository.name }}">handipradana/${{ github.event.repository.name }}</a>
+                      </td>
+                    </tr>
+                  </table>
+                </div>
+                
+                <div style="background: #e9ecef; padding: 15px; border-radius: 5px; margin-top: 20px;">
+                  <h4 style="margin-top: 0;">🔗 Quick Links</h4>
+                  <ul style="list-style: none; padding: 0;">
+                    <li style="margin-bottom: 8px;">📝 <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Workflow Run Details</a></li>
+                    <li style="margin-bottom: 8px;">👤 <a href="https://github.com/${{ github.actor }}">View User Profile</a></li>
+                    <li style="margin-bottom: 8px;">📂 <a href="https://github.com/${{ github.repository }}">View Forked Repository</a></li>
+                    <li style="margin-bottom: 8px;">🏠 <a href="https://github.com/handipradana/${{ github.event.repository.name }}">View Original Repository</a></li>
+                  </ul>
+                </div>
+                
+                <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 5px; border-left: 4px solid #ffc107;">
+                  <p><strong>⚠️ Note:</strong> This deployment was triggered by a <strong>forked repository</strong>.</p>
+                  <p>Trigger: <code>${{ github.event_name }}</code> to branch <code>${{ github.ref_name }}</code></p>
+                </div>
+              </div>
+              
+              <div style="padding: 15px; background: #343a40; color: #adb5bd; font-size: 12px; text-align: center;">
+                <p>This is an automated notification from your GitHub Actions workflow.<br>
+                Run ID: ${{ github.run_id }} | Time: $(date '+%Y-%m-%d %H:%M:%S UTC')</p>
+              </div>
+            </body>
+            </html>
+      
+      - name: 📧 Notify Original Repository Push (Optional)
+        if: steps.check-fork.outputs.is_fork == 'false'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: mail.smtp2go.com
+          server_port: 2525
+          username: ${{ secrets.SMTP2GO_USERNAME }}
+          password: ${{ secrets.SMTP2GO_PASSWORD }}
+          subject: "📦 Deployment Started: ${{ github.actor }}"
+          to: ${{ env.OWNER_EMAIL }}
+          from: "aws@seamolec.org"  # ⬅️ FIXED: Hanya email tanpa nama
+          html_body: |
+            <!DOCTYPE html>
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <div style="background: #007bff; padding: 20px; color: white; text-align: center;">
+                <h2 style="margin: 0;">📦 Deployment Started</h2>
+                <p style="opacity: 0.9;">From original repository</p>
+              </div>
+              
+              <div style="padding: 20px;">
+                <p>Hello Repository Owner,</p>
+                
+                <p>A deployment has been started from your <strong>original repository</strong>.</p>
+                
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+                  <h4 style="margin-top: 0;">📋 Deployment Details</h4>
+                  <table style="width: 100%;">
+                    <tr><td style="padding: 8px; width: 120px;"><strong>Triggered By:</strong></td><td style="padding: 8px;">@${{ github.actor }}</td></tr>
+                    <tr><td style="padding: 8px;"><strong>Event:</strong></td><td style="padding: 8px;">${{ github.event_name }}</td></tr>
+                    <tr><td style="padding: 8px;"><strong>Branch:</strong></td><td style="padding: 8px;">${{ github.ref_name }}</td></tr>
+                    <tr><td style="padding: 8px;"><strong>Repository:</strong></td><td style="padding: 8px;">${{ github.repository }}</td></tr>
+                    <tr><td style="padding: 8px;"><strong>Commit:</strong></td><td style="padding: 8px;">
+                      <a href="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}">
+                        ${{ github.sha }}
+                      </a>
+                    </td></tr>
+                  </table>
+                </div>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" 
+                     style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+                    🚀 Monitor Deployment
+                  </a>
+                </div>
+              </div>
+              
+              <div style="padding: 15px; background: #e9ecef; font-size: 12px; color: #6c757d; text-align: center;">
+                <p>This is an automated notification from your GitHub Actions workflow.</p>
+              </div>
+            </body>
+            </html>
+      
+      - name: 💾 Store Deployment Request Data
+        run: |
+          # Simpan data ke file untuk digunakan nanti
+          cat > deployment-request.json << EOF
+          {
+            "deployment_request": {
+              "github_user": "${{ github.actor }}",
+              "user_email": "${{ env.USER_EMAIL }}",
+              "repository": "${{ github.repository }}",
+              "original_repo": "handipradana/${{ github.event.repository.name }}",
+              "purpose": "${{ env.DEPLOYMENT_PURPOSE }}",
+              "run_id": "${{ github.run_id }}",
+              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+              "timestamp": "$(date -Iseconds)",
+              "is_fork": ${{ steps.check-fork.outputs.is_fork == 'true' }},
+              "event_type": "${{ github.event_name }}",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}"
+            }
+          }
+          EOF
+          
+          echo "📊 Deployment request data saved"
+
+  # ========== MAIN DEPLOYMENT JOB ==========
+  deploy-frontend:
+    name: Deploy Frontend to AWS Amplify
+    runs-on: ubuntu-latest
+    needs: track-and-notify-owner
+    if: |
+      needs.track-and-notify-owner.outputs.email_valid == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 📝 Display Deployment Info
+        run: |
+          echo "╔══════════════════════════════════════════════════╗"
+          echo "║           DEPLOYMENT INFORMATION                 ║"
+          echo "╠══════════════════════════════════════════════════╣"
+          echo "║ Event    : ${{ github.event_name }}"
+          echo "║ Actor    : ${{ github.actor }}"
+          echo "║ Repository: ${{ github.repository }}"
+          echo "║ Is Fork  : ${{ needs.track-and-notify-owner.outputs.is_fork }}"
+          echo "║ Ref      : ${{ github.ref_name }}"
+          echo "║ SHA      : ${{ github.sha }}"
+          echo "║ Run ID   : ${{ github.run_id }}"
+          echo "╚══════════════════════════════════════════════════╝"
+          
+          echo ""
+          echo "📧 User Email: ${{ needs.track-and-notify-owner.outputs.user_email }}"
+          echo "🎯 Purpose: ${{ needs.track-and-notify-owner.outputs.deployment_purpose }}"
+          
+          if [ "${{ needs.track-and-notify-owner.outputs.is_fork }}" = "true" ]; then
+            echo "📍 This is a FORKED repository deployment"
+          else
+            echo "🏠 This is an ORIGINAL repository deployment"
+          fi
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ env.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      
+      - name: Verify AWS credentials
+        run: |
+          echo "Verifying AWS credentials..."
+          
+          # Test basic AWS access
+          aws sts get-caller-identity
+          
+          # Check token expiration (jika tersedia)
+          if command -v jq &> /dev/null; then
+            aws sts get-caller-identity | jq -r '.Arn'
+          else
+            echo "Caller identity verified"
+          fi
+          
+          echo "✅ AWS credentials are valid"
+      
+      - name: Validate frontend files
+        run: |
+          echo "Validating frontend files..."
+          if [ ! -f "frontend/index.html" ]; then
+            echo "Error: index.html not found"
+            exit 1
+          fi
+          if [ ! -f "frontend/app.js" ]; then
+            echo "Error: app.js not found"
+            exit 1
+          fi
+          if [ ! -f "amplify.yml" ]; then
+            echo "Error: amplify.yml not found"
+            exit 1
+          fi
+          echo "All frontend files validated successfully"
+      
+      - name: Test AWS access
+        run: |
+          aws sts get-caller-identity
+          aws amplify list-apps --max-results 1
+      
+      - name: Check Amplify app exists
+        id: check-app
+        run: |
+          echo "Checking if Amplify app exists..."
+          
+          # Coba dengan timeout dan error handling
+          if ! APP_EXISTS=$(aws amplify list-apps \
+            --query "apps[?name=='lks-amplify-order-app'].appId" \
+            --output text 2>/dev/null); then
+            echo "❌ AWS credentials may be expired or invalid"
+            echo "Please refresh your AWS Academy Learner Lab credentials"
+            exit 1
+          fi
+          
+          if [ -z "$APP_EXISTS" ]; then
+            echo "app_exists=false" >> $GITHUB_OUTPUT
+            echo "Amplify app not found"
+          else
+            echo "app_exists=true" >> $GITHUB_OUTPUT
+            echo "app_id=$APP_EXISTS" >> $GITHUB_OUTPUT
+            echo "Amplify app found: $APP_EXISTS"
+          fi
+      
+      - name: Trigger Amplify deployment
+        if: steps.check-app.outputs.app_exists == 'true'
+        id: trigger-amplify
+        run: |
+          echo "Triggering AWS Amplify build and deployment..."
+          
+          JOB_ID=$(aws amplify start-job \
+            --app-id ${{ steps.check-app.outputs.app_id }} \
+            --branch-name master \
+            --job-type RELEASE \
+            --query 'jobSummary.jobId' \
+            --output text)
+          
+          echo "Amplify job started with ID: $JOB_ID"
+          echo "job_id=$JOB_ID" >> $GITHUB_OUTPUT
+          
+          # Wait for deployment to complete (optional)
+          echo "Waiting for deployment to complete..."
+          
+          MAX_WAIT=600  # 10 minutes
+          ELAPSED=0
+          STATUS="PENDING"
+          
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS=$(aws amplify get-job \
+              --app-id ${{ steps.check-app.outputs.app_id }} \
+              --branch-name master \
+              --job-id $JOB_ID \
+              --query 'job.summary.status' \
+              --output text 2>/dev/null || echo "PENDING")
+            
+            echo "Current status: $STATUS (${ELAPSED}s elapsed)"
+            
+            if [ "$STATUS" = "SUCCEED" ]; then
+              echo "✅ Deployment completed successfully!"
+              echo "DEPLOYMENT_STATUS=success" >> $GITHUB_ENV
+              break
+            elif [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CANCELLED" ]; then
+              echo "❌ Deployment failed with status: $STATUS"
+              echo "DEPLOYMENT_STATUS=failed" >> $GITHUB_ENV
+              break
+            fi
+            
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+          
+          if [ "$STATUS" != "SUCCEED" ] && [ "$STATUS" != "FAILED" ] && [ "$STATUS" != "CANCELLED" ]; then
+            echo "⚠️ Deployment timeout after ${MAX_WAIT}s"
+            echo "DEPLOYMENT_STATUS=timeout" >> $GITHUB_ENV
+          fi
+      
+      - name: Get Amplify app URL
+        if: steps.check-app.outputs.app_exists == 'true' && env.DEPLOYMENT_STATUS == 'success'
+        id: get-url
+        run: |
+          APP_DOMAIN=$(aws amplify get-app \
+            --app-id ${{ steps.check-app.outputs.app_id }} \
+            --query 'app.defaultDomain' \
+            --output text)
+          
+          APP_URL="https://master.$APP_DOMAIN"
+          
+          echo "🌐 Application URL: $APP_URL"
+          echo "app_url=$APP_URL" >> $GITHUB_OUTPUT
+          echo "FINAL_APP_URL=$APP_URL" >> $GITHUB_ENV
+      
+      - name: Create deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 Frontend Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Info deployment
+          if [ "${{ needs.track-and-notify-owner.outputs.is_fork }}" = "true" ]; then
+            echo "### 📍 Deployment dari Fork" >> $GITHUB_STEP_SUMMARY
+            echo "- **GitHub User:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Email:** ${{ needs.track-and-notify-owner.outputs.user_email }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Purpose:** ${{ needs.track-and-notify-owner.outputs.deployment_purpose }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 🏠 Deployment dari Repository Original" >> $GITHUB_STEP_SUMMARY
+            echo "- **Triggered By:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Event:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Author:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Event:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check-app.outputs.app_exists }}" = "true" ]; then
+            echo "### ✅ Deployment Status" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ env.DEPLOYMENT_STATUS }}" = "success" ]; then
+              echo "🎉 **DEPLOYMENT SUCCESSFUL!**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "🔗 **[View Live Application](${{ env.FINAL_APP_URL }})**" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ env.DEPLOYMENT_STATUS }}" = "failed" ]; then
+              echo "❌ **DEPLOYMENT FAILED**" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ env.DEPLOYMENT_STATUS }}" = "timeout" ]; then
+              echo "⚠️ **DEPLOYMENT TIMEOUT**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "🔄 **DEPLOYMENT IN PROGRESS**" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **Amplify App ID:** ${{ steps.check-app.outputs.app_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Job ID:** ${{ steps.trigger-amplify.outputs.job_id || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+          else
+            echo "### ⚠️ Amplify App Not Found" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Please create the Amplify app first using Terraform or AWS Console." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Tambahkan link ke run
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "[View full workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+
+  # ========== POST-DEPLOYMENT NOTIFICATIONS ==========
+  send-comprehensive-notifications:
+    name: 📨 Send Post-Deployment Notifications
+    runs-on: ubuntu-latest
+    needs: [track-and-notify-owner, deploy-frontend]
+    if: always()
+    
+    steps:
+      - name: Determine notification recipients
+        id: recipients
+        run: |
+          # Tentukan siapa yang harus dikirimi notifikasi
+          if [ "${{ needs.track-and-notify-owner.outputs.is_fork }}" = "true" ]; then
+            echo "recipients=owner_and_user" >> $GITHUB_OUTPUT
+            echo "OWNER_EMAIL=${{ env.OWNER_EMAIL }}" >> $GITHUB_ENV
+            echo "USER_EMAIL=${{ needs.track-and-notify-owner.outputs.user_email }}" >> $GITHUB_ENV
+          else
+            echo "recipients=owner_only" >> $GITHUB_OUTPUT
+            echo "OWNER_EMAIL=${{ env.OWNER_EMAIL }}" >> $GITHUB_ENV
+          fi
+          
+          # Status deployment
+          if [ "${{ needs.deploy-frontend.result }}" = "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "STATUS_EMOJI=✅" >> $GITHUB_ENV
+            echo "STATUS_TEXT=SUCCESS" >> $GITHUB_ENV
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "STATUS_EMOJI=❌" >> $GITHUB_ENV
+            echo "STATUS_TEXT=FAILED" >> $GITHUB_ENV
+          fi
+      
+      - name: 📧 Send Final Notification to Repository Owner via SMTP2GO
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: mail.smtp2go.com
+          server_port: 2525
+          username: ${{ secrets.SMTP2GO_USERNAME }}
+          password: ${{ secrets.SMTP2GO_PASSWORD }}
+          subject: "${{ env.STATUS_EMOJI }} Deployment ${{ env.STATUS_TEXT }}: ${{ github.actor }}"
+          to: ${{ env.OWNER_EMAIL }}
+          from: "aws@seamolec.org"  # ⬅️ FIXED: Hanya email tanpa nama
+          html_body: |
+            <!DOCTYPE html>
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; color: white; text-align: center;">
+                <h1 style="margin: 0;">${{ env.STATUS_EMOJI }} Deployment ${{ env.STATUS_TEXT }}</h1>
+                <p style="opacity: 0.9;">GitHub Actions Workflow Completed</p>
+              </div>
+              
+              <div style="padding: 20px; background: #f8f9fa;">
+                <h3>📊 Deployment Summary</h3>
+                
+                <div style="background: white; border-radius: 5px; padding: 20px; margin: 15px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                  <table style="width: 100%;">
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee; width: 140px;"><strong>Status:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        <span style="color: ${{ env.STATUS_TEXT == 'SUCCESS' && '#28a745' || '#dc3545' }}; font-weight: bold;">
+                          ${{ env.STATUS_EMOJI }} ${{ env.STATUS_TEXT }}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>User:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        <a href="https://github.com/${{ github.actor }}">@${{ github.actor }}</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Repository:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        <a href="https://github.com/${{ github.repository }}">${{ github.repository }}</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Is Fork:</strong></td>
+                      <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        ${{ needs.track-and-notify-owner.outputs.is_fork == 'true' && 'Yes' || 'No' }}
+                      </td>
+                    </tr>
+                    ${{ needs.track-and-notify-owner.outputs.is_fork == 'true' && '<tr><td style="padding: 10px;"><strong>User Email:</strong></td><td style="padding: 10px;">' || '' }}
+                    ${{ needs.track-and-notify-owner.outputs.is_fork == 'true' && needs.track-and-notify-owner.outputs.user_email || '' }}
+                    ${{ needs.track-and-notify-owner.outputs.is_fork == 'true' && '</td></tr>' || '' }}
+                  </table>
+                </div>
+                
+                ${{ env.FINAL_APP_URL && '<div style="text-align: center; margin: 20px 0;"><a href="' || '' }}
+                ${{ env.FINAL_APP_URL || '' }}
+                ${{ env.FINAL_APP_URL && '" style="background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">🌐 View Live Application</a></div>' || '' }}
+                
+                <div style="background: #e9ecef; padding: 15px; border-radius: 5px; margin-top: 20px;">
+                  <h4 style="margin-top: 0;">🔗 Quick Links</h4>
+                  <ul style="list-style: none; padding: 0;">
+                    <li style="margin-bottom: 8px;">📝 <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Workflow Run Details</a></li>
+                    <li style="margin-bottom: 8px;">👤 <a href="https://github.com/${{ github.actor }}">View User Profile</a></li>
+                    <li style="margin-bottom: 8px;">📂 <a href="https://github.com/${{ github.repository }}">View Repository</a></li>
+                  </ul>
+                </div>
+              </div>
+              
+              <div style="padding: 15px; background: #343a40; color: #adb5bd; font-size: 12px; text-align: center;">
+                <p>This is an automated notification from your GitHub Actions workflow.<br>
+                Run ID: ${{ github.run_id }} | Time: $(date '+%Y-%m-%d %H:%M:%S UTC')</p>
+              </div>
+            </body>
+            </html>
+      
+      - name: 📧 Send Confirmation to User via SMTP2GO (If Fork & Success)
+        if: needs.track-and-notify-owner.outputs.is_fork == 'true' && needs.deploy-frontend.result == 'success'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: mail.smtp2go.com
+          server_port: 2525
+          username: ${{ secrets.SMTP2GO_USERNAME }}
+          password: ${{ secrets.SMTP2GO_PASSWORD }}
+          subject: "✅ Your Deployment is Successful! - GitHub Actions"
+          to: ${{ needs.track-and-notify-owner.outputs.user_email }}
+          from: "aws@seamolec.org"  # ⬅️ FIXED: Hanya email tanpa nama
+          html_body: |
+            <!DOCTYPE html>
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); padding: 30px; color: white; text-align: center; border-radius: 5px 5px 0 0;">
+                <h1 style="margin: 0;">🎉 Deployment Successful!</h1>
+                <p>Your application has been successfully deployed to AWS Amplify</p>
+              </div>
+              
+              <div style="padding: 25px; background: #f8f9fa;">
+                <p>Hello <strong>@${{ github.actor }}</strong>,</p>
+                
+                <p>Your deployment has completed successfully!</p>
+                
+                <div style="background: white; padding: 20px; border-radius: 5px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                  <h3 style="margin-top: 0;">🌐 Your Application is Live!</h3>
+                  ${{ env.FINAL_APP_URL && '<p style="text-align: center; margin: 20px 0;"><a href="' || '' }}
+                  ${{ env.FINAL_APP_URL || '' }}
+                  ${{ env.FINAL_APP_URL && '" style="background: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-size: 16px;">Open Your Application</a></p>' || '' }}
+                  ${{ env.FINAL_APP_URL && '<p style="text-align: center; font-size: 14px; color: #666;">URL: <a href="' || '' }}
+                  ${{ env.FINAL_APP_URL || '' }}
+                  ${{ env.FINAL_APP_URL && '">' || '' }}
+                  ${{ env.FINAL_APP_URL || 'Application URL not available' }}
+                  ${{ env.FINAL_APP_URL && '</a></p>' || '' }}
+                </div>
+                
+                <div style="background: #e9ecef; padding: 15px; border-radius: 5px; margin-top: 20px;">
+                  <h4 style="margin-top: 0;">📋 Deployment Details</h4>
+                  <ul style="list-style: none; padding: 0;">
+                    <li style="margin-bottom: 8px;"><strong>GitHub User:</strong> @${{ github.actor }}</li>
+                    <li style="margin-bottom: 8px;"><strong>Repository:</strong> ${{ github.repository }}</li>
+                    <li style="margin-bottom: 8px;"><strong>Deployment ID:</strong> ${{ github.run_id }}</li>
+                    <li style="margin-bottom: 8px;"><strong>Timestamp:</strong> $(date '+%Y-%m-%d %H:%M:%S UTC')</li>
+                  </ul>
+                </div>
+                
+                <div style="margin-top: 25px; padding-top: 15px; border-top: 1px solid #dee2e6; color: #6c757d; font-size: 14px;">
+                  <p>You can view the full workflow run here: 
+                    <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">
+                      View Workflow Details
+                    </a>
+                  </p>
+                </div>
+              </div>
+              
+              <div style="padding: 15px; background: #343a40; color: #adb5bd; font-size: 12px; text-align: center; border-radius: 0 0 5px 5px;">
+                <p>This is an automated message from GitHub Actions.</p>
+              </div>
+            </body>
+            </html>
+      
+      - name: 📊 Create Deployment Audit Log
+        run: |
+          # Buat log untuk audit trail
+          cat > deployment-audit-${{ github.run_id }}.json << EOF
+          {
+            "audit_trail": {
+              "run_id": "${{ github.run_id }}",
+              "timestamp": "$(date -Iseconds)",
+              "event": "${{ github.event_name }}",
+              "actor": "${{ github.actor }}",
+              "repository": "${{ github.repository }}",
+              "is_fork": ${{ needs.track-and-notify-owner.outputs.is_fork == 'true' }},
+              "user_email": "${{ needs.track-and-notify-owner.outputs.user_email }}",
+              "purpose": "${{ needs.track-and-notify-owner.outputs.deployment_purpose }}",
+              "deployment_status": "${{ needs.deploy-frontend.result }}",
+              "app_url": "${{ env.FINAL_APP_URL || 'N/A' }}",
+              "amplify_app_id": "${{ steps.check-app.outputs.app_id || 'N/A' }}",
+              "workflow_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+          }
+          EOF
+          
+          echo "📄 Audit log created"
+      
+      - name: 📎 Upload Audit Log as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-audit-${{ github.run_id }}
+          path: deployment-audit-${{ github.run_id }}.json
+          retention-days: 90
+
+  # ========== EXISTING NOTIFY JOB (DIPERTAHANKAN) ==========
+  notify:
+    name: Send Deployment Notification
+    runs-on: ubuntu-latest
+    needs: deploy-frontend
+    if: always() && github.ref == 'refs/heads/master'
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Determine deployment status
+        id: status
+        run: |
+          if [ "${{ needs.deploy-frontend.result }}" == "success" ]; then
+            echo "status=✅ SUCCESS" >> $GITHUB_OUTPUT
+            echo "message=Frontend deployed successfully to AWS Amplify!" >> $GITHUB_OUTPUT
+            echo "emoji=🚀" >> $GITHUB_OUTPUT
+          else
+            echo "status=❌ FAILED" >> $GITHUB_OUTPUT
+            echo "message=Frontend deployment failed. Please check the logs." >> $GITHUB_OUTPUT
+            echo "emoji=⚠️" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Send SNS notification
+        continue-on-error: true
+        run: |
+          # Check if SNS topic exists
+          TOPIC_EXISTS=$(aws sns list-topics \
+            --query "Topics[?contains(TopicArn, 'lks-sns-order-notifications')].TopicArn" \
+            --output text)
+          
+          if [ -n "$TOPIC_EXISTS" ]; then
+            aws sns publish \
+              --topic-arn $TOPIC_EXISTS \
+              --subject "${{ steps.status.outputs.emoji }} Frontend Deployment - ${{ steps.status.outputs.status }}" \
+              --message "
+          LKS Order Management System - Frontend Deployment
+          
+          Status: ${{ steps.status.outputs.status }}
+          Message: ${{ steps.status.outputs.message }}
+          
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Author: ${{ github.actor }}
+          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          
+          Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          "
+            echo "✅ SNS notification sent"
+          else
+            echo "⚠️ SNS topic not found, skipping notification"
+          fi
