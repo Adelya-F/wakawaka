@@ -20,15 +20,14 @@ on:
         required: true
         type: string
         default: ''
-        validation: '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
-        help: 'Email akan digunakan untuk notifikasi dan tracking deployment'
+
       
       deployment_purpose:
         description: '🎯 Tujuan Deployment (opsional)'
         required: false
         type: string
         default: 'Testing/Learning'
-        help: 'Deskripsi singkat tujuan deployment ini'
+
 
 env:
   AWS_REGION: us-east-1
@@ -41,10 +40,10 @@ jobs:
     name: 📧 Track Fork Deployment & Notify Owner
     runs-on: ubuntu-latest
     outputs:
-      email_valid: ${{ steps.validate.outputs.email_valid }}
+      email_valid: ${{ steps.validate-email.outputs.email_valid || steps.skip-validation.outputs.email_valid }}
       is_fork: ${{ steps.check-fork.outputs.is_fork }}
       user_email: ${{ steps.get-email.outputs.user_email }}
-      deployment_purpose: ${{ steps.get-purpose.outputs.deployment_purpose }}
+      deployment_purpose: ${{ steps.get-email.outputs.deployment_purpose }}
     
     steps:
       - name: 🔍 Check if Repository is Fork
@@ -319,29 +318,14 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ env.AWS_SESSION_TOKEN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-      
+
       - name: Verify AWS credentials
         run: |
-          echo "Verifying AWS credentials..."
-          
-          # Test basic AWS access
-          aws sts get-caller-identity
-          
-          # Check token expiration (jika tersedia)
-          if command -v jq &> /dev/null; then
-            aws sts get-caller-identity | jq -r '.Arn'
-          else
-            echo "Caller identity verified"
-          fi
-          
+          aws sts get-caller-identity | jq -r '.Arn' 2>/dev/null || aws sts get-caller-identity
           echo "✅ AWS credentials are valid"
       
       - name: Validate frontend files
@@ -360,11 +344,6 @@ jobs:
             exit 1
           fi
           echo "All frontend files validated successfully"
-      
-      - name: Test AWS access
-        run: |
-          aws sts get-caller-identity
-          aws amplify list-apps --max-results 1
       
       - name: Check Amplify app exists
         id: check-app
@@ -703,7 +682,7 @@ jobs:
               "purpose": "${{ needs.track-and-notify-owner.outputs.deployment_purpose }}",
               "deployment_status": "${{ needs.deploy-frontend.result }}",
               "app_url": "${{ env.FINAL_APP_URL || 'N/A' }}",
-              "amplify_app_id": "${{ steps.check-app.outputs.app_id || 'N/A' }}",
+              "amplify_app_id": "see-amplify-console",
               "workflow_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             }
           }
