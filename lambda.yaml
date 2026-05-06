@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Lambda Functions Infrastructure'
+
+Parameters:
+  LabRoleArn:
+    Type: String
+    Default: arn:aws:iam::111122223333:role/LabRole
+  DBInstanceAddress:
+    Type: String
+  DBName:
+    Type: String
+    Default: ordersdb
+  DBUsername:
+    Type: String
+    Default: dbadmin
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: TechnoCloud2026!
+  S3BucketName:
+    Type: String
+    Default: lks-orders-adelyafauzi01-2026
+  SNSTopicArn:
+    Type: String
+  LambdaSecurityGroup:
+    Type: String
+  PrivateSubnet1:
+    Type: String
+  PrivateSubnet2:
+    Type: String
+
+Resources:
+  LambdaOrderManagement:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-order-management
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 512
+      Timeout: 30
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          DB_HOST: !Ref DBInstanceAddress
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+          S3_BUCKET: !Ref S3BucketName
+          SNS_TOPIC: !Ref SNSTopicArn
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Order Management OK')
+              }
+
+  LambdaProcessPayment:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-process-payment
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 512
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'paymentStatus': 'success',
+                  'body': json.dumps('Payment OK')
+              }
+
+  LambdaUpdateInventory:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-update-inventory
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 256
+      Timeout: 45
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'inventoryStatus': 'success',
+                  'body': json.dumps('Inventory Updated')
+              }
+
+  LambdaSendNotification:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-send-notification
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 256
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Notification Sent')
+              }
+
+  LambdaGenerateReport:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-generate-report
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 1024
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Report Generated')
+              }
+
+  LambdaInitDB:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-init-db
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 512
+      Timeout: 300
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          DB_HOST: !Ref DBInstanceAddress
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('DB Initialized')
+              }
+
+Outputs:
+  OrderManagementArn:
+    Value: !GetAtt LambdaOrderManagement.Arn
+  InitDBArn:
+    Value: !GetAtt LambdaInitDB.Arn

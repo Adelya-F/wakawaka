@@ -1,0 +1,832 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  YourName:
+    Type: String
+    Default: adelyaF01
+  LabRoleArn:
+    Type: String
+    Default: arn:aws:iam::111122223333:role/LabRole
+
+Resources:
+
+  LKSVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 20.1.0.0/20
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: lks-vpc-serverless
+
+  LKSInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: lks-igw
+
+  LKSVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref LKSVPC
+      InternetGatewayId: !Ref LKSInternetGateway
+
+  LKSPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LKSVPC
+      CidrBlock: 20.1.0.0/25
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: lks-public-subnet-1
+
+  LKSPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LKSVPC
+      CidrBlock: 20.1.1.0/25
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: lks-public-subnet-2
+
+  LKSPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LKSVPC
+      CidrBlock: 20.1.11.0/25
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: lks-private-subnet-1
+
+  LKSPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LKSVPC
+      CidrBlock: 20.1.12.0/25
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: lks-private-subnet-2
+
+  LKSPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref LKSVPC
+      Tags:
+        - Key: Name
+          Value: lks-public-rt
+
+  LKSPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: LKSVPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref LKSPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref LKSInternetGateway
+
+  LKSPublicSubnet1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref LKSPublicSubnet1
+      RouteTableId: !Ref LKSPublicRouteTable
+
+  LKSPublicSubnet2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref LKSPublicSubnet2
+      RouteTableId: !Ref LKSPublicRouteTable
+
+  LKSPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref LKSVPC
+      Tags:
+        - Key: Name
+          Value: lks-private-rt
+
+  LKSPrivateSubnet1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref LKSPrivateSubnet1
+      RouteTableId: !Ref LKSPrivateRouteTable
+
+  LKSPrivateSubnet2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref LKSPrivateSubnet2
+      RouteTableId: !Ref LKSPrivateRouteTable
+
+  LKSSGLambda:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: lks-sg-lambda
+      Description: security for lambda function
+      VpcId: !Ref LKSVPC
+
+  LKSSGRDS:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: lks-sg-rds
+      Description: security for RDS
+      VpcId: !Ref LKSVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LKSSGLambda
+
+  LKSSGVPCEndpoint:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: lks-sg-vpc-endpoint
+      Description: security for vpc endpoint
+      VpcId: !Ref LKSVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 20.1.0.0/20
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 20.1.0.0/20
+
+  LKSS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref LKSVPC
+      ServiceName: com.amazonaws.us-east-1.s3
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref LKSPrivateRouteTable
+      Tags:
+        - Key: Name
+          Value: lks-s3-endpoints
+
+  LKSEventBridgeEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref LKSVPC
+      ServiceName: com.amazonaws.us-east-1.events
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref LKSPrivateSubnet1
+        - !Ref LKSPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref LKSSGVPCEndpoint
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: lks-eventbridge-endpoints
+
+  LKSStepFunctionsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref LKSVPC
+      ServiceName: com.amazonaws.us-east-1.states
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref LKSPrivateSubnet1
+        - !Ref LKSPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref LKSSGVPCEndpoint
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: lks-steps-endpoints
+
+  LKSSNSEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref LKSVPC
+      ServiceName: com.amazonaws.us-east-1.sns
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref LKSPrivateSubnet1
+        - !Ref LKSPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref LKSSGVPCEndpoint
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: lks-sns-endpoints
+
+  LKSOrdersBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub lks-orders-${YourName}-2026
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: orders-lifecycle
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: INTELLIGENT_TIERING
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            ExpirationInDays: 365
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+            AllowedOrigins:
+              - "*"
+
+  LKSOrdersBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LKSOrdersBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::lks-orders-${YourName}-2026/*
+
+  LKSLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub lks-logs-${YourName}-2026
+      LifecycleConfiguration:
+        Rules:
+          - Id: logs-lifecycle
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 7
+                StorageClass: INTELLIGENT_TIERING
+            ExpirationInDays: 90
+
+  LKSRDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: subnet group for rds orders
+      SubnetIds:
+        - !Ref LKSPrivateSubnet1
+        - !Ref LKSPrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: lks-rds-subnet-group
+
+  LKSRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: lks-rds-orders
+      DBName: ordersdb
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      EngineVersion: "15.4"
+      MasterUsername: dbadmin
+      MasterUserPassword: TechnoCloud2026!
+      AllocatedStorage: "20"
+      StorageType: gp3
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref LKSRDSSubnetGroup
+      VPCSecurityGroups:
+        - !Ref LKSSGRDS
+      BackupRetentionPeriod: 7
+      DeletionProtection: false
+
+  LKSSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: lks-sns-order-notifications
+      Subscription:
+        - Protocol: email
+          Endpoint: handi@seamolec.org
+
+  LKSLambdaOrderManagement:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-order-management
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      MemorySize: 512
+      Timeout: 30
+      VpcConfig:
+        SubnetIds:
+          - !Ref LKSPrivateSubnet1
+          - !Ref LKSPrivateSubnet2
+        SecurityGroupIds:
+          - !Ref LKSSGLambda
+      Environment:
+        Variables:
+          DB_NAME: ordersdb
+          DB_USER: dbadmin
+          DB_PASSWORD: TechnoCloud2026!
+          DB_HOST: !GetAtt LKSRDSInstance.Endpoint.Address
+          S3_BUCKET: !Ref LKSOrdersBucket
+          SNS_TOPIC: !Ref LKSSNSTopic
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Order Management OK')
+              }
+
+  LKSLambdaProcessPayment:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-process-payment
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      MemorySize: 512
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'paymentStatus': 'success',
+                  'body': json.dumps('Payment OK')
+              }
+
+  LKSLambdaUpdateInventory:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-update-inventory
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      MemorySize: 256
+      Timeout: 45
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'inventoryStatus': 'success',
+                  'body': json.dumps('Inventory Updated')
+              }
+
+  LKSLambdaSendNotification:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-send-notification
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      MemorySize: 256
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Notification Sent')
+              }
+
+  LKSLambdaGenerateReport:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-generate-report
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      MemorySize: 1024
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Report Generated')
+              }
+
+  LKSLambdaInitDB:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-init-db
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      MemorySize: 512
+      Timeout: 300
+      VpcConfig:
+        SubnetIds:
+          - !Ref LKSPrivateSubnet1
+          - !Ref LKSPrivateSubnet2
+        SecurityGroupIds:
+          - !Ref LKSSGLambda
+      Environment:
+        Variables:
+          DB_NAME: ordersdb
+          DB_USER: dbadmin
+          DB_PASSWORD: TechnoCloud2026!
+          DB_HOST: !GetAtt LKSRDSInstance.Endpoint.Address
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('DB Initialized')
+              }
+
+  LKSStepFunctionStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: lks-stepfunctions-order-workflow
+      StateMachineType: STANDARD
+      RoleArn: !Ref LabRoleArn
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "StartAt": "ValidateOrder",
+            "States": {
+              "ValidateOrder": {
+                "Type": "Task",
+                "Resource": "${LKSLambdaOrderManagement.Arn}",
+                "Next": "ProcessPayment"
+              },
+              "ProcessPayment": {
+                "Type": "Task",
+                "Resource": "${LKSLambdaProcessPayment.Arn}",
+                "Next": "PaymentChoice"
+              },
+              "PaymentChoice": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.paymentStatus",
+                    "StringEquals": "success",
+                    "Next": "UpdateInventory"
+                  }
+                ],
+                "Default": "PaymentFailed"
+              },
+              "UpdateInventory": {
+                "Type": "Task",
+                "Resource": "${LKSLambdaUpdateInventory.Arn}",
+                "Next": "InventoryChoice"
+              },
+              "InventoryChoice": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.inventoryStatus",
+                    "StringEquals": "success",
+                    "Next": "SendConfirmation"
+                  }
+                ],
+                "Default": "InventoryFailed"
+              },
+              "SendConfirmation": {
+                "Type": "Task",
+                "Resource": "${LKSLambdaSendNotification.Arn}",
+                "Next": "OrderSuccess"
+              },
+              "PaymentFailed": {
+                "Type": "Task",
+                "Resource": "${LKSLambdaSendNotification.Arn}",
+                "Next": "OrderFailed"
+              },
+              "InventoryFailed": {
+                "Type": "Task",
+                "Resource": "${LKSLambdaSendNotification.Arn}",
+                "Next": "OrderFailed"
+              },
+              "OrderSuccess": {
+                "Type": "Succeed"
+              },
+              "OrderFailed": {
+                "Type": "Fail"
+              }
+            }
+          }
+
+  LKSEventBridgeDailyReport:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: lks-eventbridge-daily-report
+      ScheduleExpression: cron(59 23 * * ? *)
+      State: ENABLED
+      Targets:
+        - Id: GenerateReportTarget
+          Arn: !GetAtt LKSLambdaGenerateReport.Arn
+
+  LKSPermissionDailyReport:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LKSLambdaGenerateReport
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LKSEventBridgeDailyReport.Arn
+
+  LKSEventBridgeOrderStatus:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: lks-eventbridge-order-status
+      EventPattern:
+        source:
+          - custom.order-management
+        detail-type:
+          - OrderStatusChange
+      State: ENABLED
+      Targets:
+        - Id: SendNotificationTarget
+          Arn: !GetAtt LKSLambdaSendNotification.Arn
+
+  LKSPermissionOrderStatus:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LKSLambdaSendNotification
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LKSEventBridgeOrderStatus.Arn
+
+  LKSEventBridgeLowStock:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: lks-eventbridge-low-stock
+      ScheduleExpression: rate(1 hour)
+      State: ENABLED
+      Targets:
+        - Id: LowStockTarget
+          Arn: !GetAtt LKSLambdaUpdateInventory.Arn
+
+  LKSPermissionLowStock:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LKSLambdaUpdateInventory
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LKSEventBridgeLowStock.Arn
+
+  LKSRestAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: lks-api-orders
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  LKSOrdersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+      ParentId: !GetAtt LKSRestAPI.RootResourceId
+      PathPart: orders
+
+  LKSOrdersIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+      ParentId: !Ref LKSOrdersResource
+      PathPart: "{id}"
+
+  LKSGetOrders:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+      ResourceId: !Ref LKSOrdersResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LKSLambdaOrderManagement.Arn}/invocations
+
+  LKSPostOrders:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+      ResourceId: !Ref LKSOrdersResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LKSLambdaOrderManagement.Arn}/invocations
+
+  LKSGetOrderById:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+      ResourceId: !Ref LKSOrdersIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LKSLambdaOrderManagement.Arn}/invocations
+
+  LKSPutOrder:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+      ResourceId: !Ref LKSOrdersIdResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LKSLambdaOrderManagement.Arn}/invocations
+
+  LKSDeleteOrder:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+      ResourceId: !Ref LKSOrdersIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LKSLambdaOrderManagement.Arn}/invocations
+
+  LKSAPIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - LKSGetOrders
+      - LKSPostOrders
+      - LKSGetOrderById
+      - LKSPutOrder
+      - LKSDeleteOrder
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+
+  LKSAPIStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref LKSRestAPI
+      DeploymentId: !Ref LKSAPIDeployment
+      StageName: production
+
+  LKSAPIKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn: LKSAPIStage
+    Properties:
+      Name: lks-api-key
+      Enabled: true
+      StageKeys:
+        - RestApiId: !Ref LKSRestAPI
+          StageName: production
+
+  LKSUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: lks-usage-plan
+      Throttle:
+        RateLimit: 1000
+        BurstLimit: 2000
+      Quota:
+        Limit: 100000
+        Period: MONTH
+      ApiStages:
+        - ApiId: !Ref LKSRestAPI
+          Stage: !Ref LKSAPIStage
+
+  LKSUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref LKSAPIKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref LKSUsagePlan
+
+  LKSLambdaPermissionAPIGW:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LKSLambdaOrderManagement
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:us-east-1:${AWS::AccountId}:${LKSRestAPI}/*
+
+  LKSLogGroupOrderManagement:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/lks-lambda-order-management
+      RetentionInDays: 7
+
+  LKSLogGroupProcessPayment:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/lks-lambda-process-payment
+      RetentionInDays: 7
+
+  LKSLogGroupUpdateInventory:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/lks-lambda-update-inventory
+      RetentionInDays: 7
+
+  LKSLogGroupSendNotification:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/lks-lambda-send-notification
+      RetentionInDays: 7
+
+  LKSLogGroupGenerateReport:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/lks-lambda-generate-report
+      RetentionInDays: 7
+
+  LKSLogGroupInitDB:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/lks-lambda-init-db
+      RetentionInDays: 7
+
+  LKSAlarmLambdaErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: lks-alarm-lambda-errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  LKSAlarmAPIGateway4XX:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: lks-alarm-apigw-4xx
+      MetricName: 4XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: ApiName
+          Value: lks-api-orders
+
+  LKSAlarmRDSCPU:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: lks-alarm-rds-cpu
+      MetricName: CPUUtilization
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: lks-rds-orders
+
+  LKSAlarmStepFunctions:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: lks-alarm-stepfunctions-failures
+      MetricName: ExecutionsFailed
+      Namespace: AWS/States
+      Statistic: Sum
+      Period: 600
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  LKSDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: lks-dashboard-serverless
+      DashboardBody: >
+        {"widgets":[{"type":"metric","properties":{"title":"Lambda Errors","metrics":[["AWS/Lambda","Errors"]],"period":300,"view":"timeSeries"}},{"type":"metric","properties":{"title":"API Gateway Requests","metrics":[["AWS/ApiGateway","Count"]],"period":300,"view":"timeSeries"}},{"type":"metric","properties":{"title":"Step Functions Executions","metrics":[["AWS/States","ExecutionsStarted"],["AWS/States","ExecutionsFailed"]],"period":300,"view":"timeSeries"}},{"type":"metric","properties":{"title":"RDS CPU","metrics":[["AWS/RDS","CPUUtilization",{"stat":"Average"}]],"period":300,"view":"timeSeries"}}]}
+
+Outputs:
+  VPCId:
+    Value: !Ref LKSVPC
+  RDSEndpoint:
+    Value: !GetAtt LKSRDSInstance.Endpoint.Address
+  APIGatewayURL:
+    Value: !Sub https://${LKSRestAPI}.execute-api.us-east-1.amazonaws.com/production
+  SNSTopicArn:
+    Value: !Ref LKSSNSTopic
+  StateMachineArn:
+    Value: !Ref LKSStepFunctionStateMachine

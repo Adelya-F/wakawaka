@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Serverless Infrastructure - RDS Component'
+
+Parameters:
+  DBInstanceID:
+    Type: String
+    Default: lks-rds-orders
+  DBName:
+    Type: String
+    Default: ordersdb
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+  DBUsername:
+    Type: String
+    Default: dbadmin
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: TechnoCloud2026!
+
+Resources:
+  DBSubnetGroupRDS:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !ImportValue LKS-PrivateSubnet1
+        - !ImportValue LKS-PrivateSubnet2
+
+  RDS:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceID
+      DBName: !Ref DBName
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      Engine: postgres
+      EngineVersion: "15"
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !ImportValue LKS-RDS-SG
+      DBSubnetGroupName: !Ref DBSubnetGroupRDS
+      MonitoringInterval: 0
+      PubliclyAccessible: false
+      MultiAZ: false
+      StorageType: gp2
+      BackupRetentionPeriod: 7
+      Tags:
+        - Key: Name
+          Value: lks-rds-orders
+
+Outputs:
+  RDSEndpoint:
+    Value: !GetAtt RDS.Endpoint.Address
+    Export:
+      Name: LKS-RDS-Endpoint

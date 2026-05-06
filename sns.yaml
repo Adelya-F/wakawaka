@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Serverless Infrastructure - Core Components Only'
+
+Parameters:
+  DBInstanceID:
+    Type: String
+    Default: lks-rds-orders
+  DBName:
+    Type: String
+    Default: ordersdb
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+  DBUsername:
+    Type: String
+    Default: dbadmin
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: TechnoCloud2026!
+  LabRoleArn:
+    Type: String
+    Default: arn:aws:iam::111122223333:role/LabRole
+
+Resources:
+    SNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: lks-sns-order-notifications
+        Subscription:
+          - Protocol: email
+            Endpoint: handi@seamolec.org

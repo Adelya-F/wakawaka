@@ -1,0 +1,651 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Serverless Infrastructure - Core Components Only'
+
+Parameters:
+  DBInstanceID:
+    Type: String
+    Default: lks-rds-orders
+  DBName:
+    Type: String
+    Default: ordersdb
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+  DBUsername:
+    Type: String
+    Default: dbadmin
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: TechnoCloud2026!
+  LabRoleArn:
+    Type: String
+    Default: arn:aws:iam::111122223333:role/LabRole
+
+Resources:
+
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 20.1.0.0/20
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: lks-vpc-serverless
+
+  ipv6CidrBlock:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      VpcId: !Ref myVPC
+      AmazonProvidedIpv6CidrBlock: true
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 20.1.0.0/25
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet-2a
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 20.1.1.0/25
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet-2b
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 20.1.11.0/25
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: private-subnet-2a
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 20.1.12.0/25
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: private-subnet-2b
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: lks-igw
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref myVPC
+
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: lks-nat-gateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicRouteIPv6:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationIpv6CidrBlock: "::/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  SGAppsLambda:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: security for lambda function
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: lks-sg-lambda
+
+  SGAppsRDS:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: security for RDS
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref SGAppsLambda
+      Tags:
+        - Key: Name
+          Value: lks-sg-rds
+
+  SGAppsVPC:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: security for vpc endpoint
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 20.1.0.0/20
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 20.1.0.0/20
+      Tags:
+        - Key: Name
+          Value: lks-sg-vpc-endpoint
+
+  S3EndpointVPC:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref myVPC
+      ServiceName: com.amazonaws.us-east-1.s3
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+      Tags:
+        - Key: Name
+          Value: lks-s3-endpoints
+
+  SNSEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref myVPC
+      ServiceName: com.amazonaws.us-east-1.sns
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref SGAppsVPC
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: lks-sns-endpoints
+
+  S3Orders:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: lks-orders-adelya-2026
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveAndExpire
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: INTELLIGENT_TIERING
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            ExpirationInDays: 365
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+            AllowedOrigins:
+              - "*"
+      Tags:
+        - Key: Name
+          Value: lks-orders-adelya-2026
+
+  S3Logs:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: lks-logs-adelya-2026
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      LifecycleConfiguration:
+        Rules:
+          - Id: LogsLifecycle
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 7
+                StorageClass: INTELLIGENT_TIERING
+            ExpirationInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: Name
+          Value: lks-logs-adelya-2026
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Orders
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - s3:GetObject
+            Resource: !Sub arn:aws:s3:::${S3Orders}/*
+
+  DBSubnetGroupRDS:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RDS:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceID
+      DBName: !Ref DBName
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      Engine: postgres
+      EngineVersion: "15.4"
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !Ref SGAppsRDS
+      DBSubnetGroupName: !Ref DBSubnetGroupRDS
+      MonitoringInterval: 0
+      PubliclyAccessible: false
+      MultiAZ: false
+      StorageType: gp3
+      BackupRetentionPeriod: 7
+      Tags:
+        - Key: Name
+          Value: lks-rds-orders
+
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: lks-sns-order-notifications
+      Subscription:
+        - Protocol: email
+          Endpoint: handi@seamolec.org
+
+  LambdaOrderManagement:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-order-management
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python 3.11
+      MemorySize: 512
+      Timeout: 30
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SGAppsLambda
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          DB_HOST: !GetAtt RDS.Endpoint.Address
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+          S3_BUCKET: !Ref S3Orders
+          SNS_TOPIC: !Ref SNSTopic
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Order Management OK')
+              }
+
+  LambdaProcessPayment:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-process-payment
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 512
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'paymentStatus': 'success',
+                  'body': json.dumps('Payment OK')
+              }
+
+  LambdaUpdateInventory:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-update-inventory
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 256
+      Timeout: 45
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'inventoryStatus': 'success',
+                  'body': json.dumps('Inventory Updated')
+              }
+
+  LambdaSendNotification:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-send-notification
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 256
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Notification Sent')
+              }
+
+  LambdaGenerateReport:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-generate-report
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 1024
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Report Generated')
+              }
+
+  LambdaInitDB:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lks-lambda-init-db
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: python3.11
+      MemorySize: 512
+      Timeout: 300
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SGAppsLambda
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          DB_HOST: !GetAtt RDS.Endpoint.Address
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('DB Initialized')
+              }
+
+  RestAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: lks-api-orders
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  OrdersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestAPI
+      ParentId: !GetAtt RestAPI.RootResourceId
+      PathPart: orders
+
+  OrdersIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestAPI
+      ParentId: !Ref OrdersResource
+      PathPart: "{id}"
+
+  GetOrders:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestAPI
+      ResourceId: !Ref OrdersResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LambdaOrderManagement.Arn}/invocations
+
+  PostOrders:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestAPI
+      ResourceId: !Ref OrdersResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LambdaOrderManagement.Arn}/invocations
+
+  GetOrderById:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestAPI
+      ResourceId: !Ref OrdersIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LambdaOrderManagement.Arn}/invocations
+
+  PutOrder:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestAPI
+      ResourceId: !Ref OrdersIdResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LambdaOrderManagement.Arn}/invocations
+
+  DeleteOrder:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestAPI
+      ResourceId: !Ref OrdersIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${LambdaOrderManagement.Arn}/invocations
+
+  APIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - GetOrders
+      - PostOrders
+      - GetOrderById
+      - PutOrder
+      - DeleteOrder
+    Properties:
+      RestApiId: !Ref RestAPI
+
+  APIStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RestAPI
+      DeploymentId: !Ref APIDeployment
+      StageName: production
+
+  APIKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn: APIStage
+    Properties:
+      Name: lks-api-key
+      Enabled: true
+      StageKeys:
+        - RestApiId: !Ref RestAPI
+          StageName: production
+
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: lks-usage-plan
+      Throttle:
+        RateLimit: 1000
+        BurstLimit: 2000
+      Quota:
+        Limit: 100000
+        Period: MONTH
+      ApiStages:
+        - ApiId: !Ref RestAPI
+          Stage: !Ref APIStage
+
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref APIKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+
+  LambdaPermissionAPIGW:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaOrderManagement
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:us-east-1:${AWS::AccountId}:${RestAPI}/*
+
+Outputs:
+  VPCId:
+    Value: !Ref myVPC
+  RDSEndpoint:
+    Value: !GetAtt RDS.Endpoint.Address
+  APIGatewayURL:
+    Value: !Sub https://${RestAPI}.execute-api.us-east-1.amazonaws.com/production
+  SNSTopicArn:
+    Value: !Ref SNSTopic
